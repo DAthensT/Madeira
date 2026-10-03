@@ -1,0 +1,6 @@
+; Export table for the minimal DirectComposition shipped as dcomp.dll.
+LIBRARY dcomp.dll
+EXPORTS
+    DCompositionCreateDevice
+    DCompositionCreateDevice2
+    DCompositionCreateDevice3
