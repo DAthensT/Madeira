@@ -61,17 +61,25 @@ jobs:
           unzip -l "$IPA" | grep -E "$FARM/(ntdll|madeira_d3d12|d3d12|dcomp|dxgi)\.dll"
           sha256sum "$IPA" | tee "$IPA.sha256"
           echo "IPA=$IPA" >> "$GITHUB_ENV"
+          # A/B variant: only the ntdll.dll patch, every other module as shipped.
+          NTDLL_IPA="Madeira-0.1.1-sts2-ntdll-only-${GITHUB_SHA::7}.ipa"
+          cp "$BASE_IPA" "$NTDLL_IPA"
+          (cd stage && zip -q "../$NTDLL_IPA" $FARM/ntdll.dll)
+          sha256sum "$NTDLL_IPA" | tee "$NTDLL_IPA.sha256"
+          echo "NTDLL_IPA=$NTDLL_IPA" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.IPA }}
-          path: ${{ env.IPA }}
+          path: |
+            ${{ env.IPA }}
+            ${{ env.NTDLL_IPA }}
 
       - name: Publish a release in this fork
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="sts2-${GITHUB_SHA::7}"
-          gh release create "$TAG" "$IPA" "$IPA.sha256" --repo "$GITHUB_REPOSITORY" \
+          gh release create "$TAG" "$IPA" "$IPA.sha256" "$NTDLL_IPA" "$NTDLL_IPA.sha256" --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" --prerelease --title "Madeira 0.1.1 + StS2 fixes (${GITHUB_SHA::7})" \
-            --notes "Official Madeira 0.1.1 IPA with madeira_d3d12/d3d12, dxgi and dcomp rebuilt from this commit and DXMT ${DXMT_REF}, and ntdll.dll patched (tools/sts2/patch-ntdll-heap-stp.py). Re-sign when sideloading."
+            --notes "$IPA: official Madeira 0.1.1 IPA with madeira_d3d12/d3d12, dxgi and dcomp rebuilt from this commit and DXMT ${DXMT_REF}, and ntdll.dll patched (tools/sts2/patch-ntdll-heap-stp.py). $NTDLL_IPA: only the ntdll.dll patch (A/B). Re-sign when sideloading."
