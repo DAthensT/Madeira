@@ -10775,9 +10775,26 @@ static void mad_swap_release_buffers(struct mad_swapchain *s) {
     s->nbuf = 0;
 }
 
+/* The layer takes the same pixel format so the presenting blit is a plain
+ * copy. framebuffer_only must be off: a framebuffer-only drawable cannot
+ * be a blit destination. A composition swapchain has no layer until its
+ * window is known (MadeiraD3D12SwapChainSetHwnd). */
+static void mad_swap_apply_layer(struct mad_swapchain *s) {
+    struct WMTLayerProps props;
+    if (!s->layer) return;
+    memset(&props, 0, sizeof props);
+    MetalLayer_getProps(s->layer, &props);
+    props.device = s->dev->mtl_device;
+    props.drawable_width = s->desc.Width;
+    props.drawable_height = s->desc.Height;
+    props.pixel_format = s->pf;
+    props.framebuffer_only = false;
+    props.display_sync_enabled = true;
+    MetalLayer_setProps(s->layer, &props);
+}
+
 static HRESULT mad_swap_make_buffers(struct mad_swapchain *s) {
     D3D12_RESOURCE_DESC rd;
-    struct WMTLayerProps props;
     UINT i, n = s->desc.BufferCount ? s->desc.BufferCount : 2;
     int is_depth;
     if (n > MAD_SWAP_MAX_BUFFERS) n = MAD_SWAP_MAX_BUFFERS;
@@ -10803,18 +10820,7 @@ static HRESULT mad_swap_make_buffers(struct mad_swapchain *s) {
     }
     s->nbuf = n;
     s->index = 0;
-    /* The layer takes the same pixel format so the presenting blit is a plain
-     * copy. framebuffer_only must be off: a framebuffer-only drawable cannot
-     * be a blit destination. */
-    memset(&props, 0, sizeof props);
-    MetalLayer_getProps(s->layer, &props);
-    props.device = s->dev->mtl_device;
-    props.drawable_width = s->desc.Width;
-    props.drawable_height = s->desc.Height;
-    props.pixel_format = s->pf;
-    props.framebuffer_only = false;
-    props.display_sync_enabled = true;
-    MetalLayer_setProps(s->layer, &props);
+    mad_swap_apply_layer(s);
     d3d12_log("[madeira-d3d12] swapchain: %ux%u, %u buffers, format %u, hwnd %p\n",
               s->desc.Width, s->desc.Height, n, (unsigned)s->desc.Format, (void *)s->hwnd);
     return S_OK;
@@ -10992,6 +10998,11 @@ static void mad_present_run(struct mad_swapchain *s, UINT idx) {
                 d3d12_log("[madeira-d3d12] ml1070 present #%llu waited for the GPU to finish frame N-%u (serial %llu; %ld such waits so far)\n",
                           (unsigned long long)s->presents, lat, (unsigned long long)need, waits);
         }
+    }
+    if (!s->layer) {   /* composition swapchain whose window is not bound yet: drop the frame */
+        static unsigned said_unbound;
+        if (said_unbound++ < 3) d3d12_log("[madeira-d3d12] Present: composition swapchain has no window yet\n");
+        return;
     }
     { LONG64 td = mad_qpc();   /* ml1128 */
     drawable = MetalLayer_nextDrawable(s->layer);
@@ -11185,7 +11196,10 @@ static HRESULT mad_swapchain_create(struct mad_queue *q, IDXGIFactory1 *factory,
     HRESULT hr;
     if (!out) return E_POINTER;
     *out = NULL;
-    if (!q || !desc || !hwnd) return DXGI_ERROR_INVALID_CALL;
+    /* hwnd NULL: a composition swapchain (CreateSwapChainForComposition). It
+     * renders into its back buffers as usual and is shown once dcomp.dll binds
+     * it to a window with MadeiraD3D12SwapChainSetHwnd. */
+    if (!q || !desc) return DXGI_ERROR_INVALID_CALL;
     s = calloc(1, sizeof *s);
     if (!s) return E_OUTOFMEMORY;
     s->vtbl = &g_swap_vtbl; s->refs = 1; s->iid = &IID_IDXGISwapChain4; s->name = "SwapChain";
@@ -11197,8 +11211,9 @@ static HRESULT mad_swapchain_create(struct mad_queue *q, IDXGIFactory1 *factory,
     s->desc = *desc;
     if (fs) s->fs = *fs; else s->fs.Windowed = TRUE;
     s->max_latency = 1;
-    s->view = CreateMetalViewFromHWND((intptr_t)hwnd, s->dev->mtl_device, &s->layer);
-    if (!s->view || !s->layer) {
+    if (hwnd) s->view = CreateMetalViewFromHWND((intptr_t)hwnd, s->dev->mtl_device, &s->layer);
+    else d3d12_log("[madeira-d3d12] swapchain: composition swapchain, window bound later\n");
+    if (hwnd && (!s->view || !s->layer)) {
         d3d12_log("[madeira-d3d12] swapchain: no Metal view for hwnd %p\n", (void *)hwnd);
         swap_Release((IDXGISwapChain4 *)s);
         return DXGI_ERROR_UNSUPPORTED;
@@ -11206,6 +11221,33 @@ static HRESULT mad_swapchain_create(struct mad_queue *q, IDXGIFactory1 *factory,
     hr = mad_swap_make_buffers(s);
     if (FAILED(hr)) { swap_Release((IDXGISwapChain4 *)s); return hr; }
     *out = (IDXGISwapChain1 *)s;
+    return S_OK;
+}
+
+/* Binds a composition swapchain (created with no window) to the window its
+ * DirectComposition target names. dcomp.dll calls this at Commit; Godot 4
+ * presents only through DirectComposition (CreateSwapChainForComposition,
+ * then a target for its HWND whose root visual holds the swapchain).
+ * Returns S_FALSE when the object is not one of ours, so a caller can try
+ * other runtimes; rebinding to the same window is a no-op. */
+__declspec(dllexport) HRESULT WINAPI MadeiraD3D12SwapChainSetHwnd(IUnknown *swapchain, HWND hwnd) {
+    struct mad_swapchain *s = (struct mad_swapchain *)swapchain;
+    obj_handle_t view, layer = 0;
+    if (!s || !hwnd) return E_INVALIDARG;
+    if (s->vtbl != &g_swap_vtbl) return S_FALSE;
+    if (s->hwnd == hwnd && s->layer) return S_OK;
+    view = CreateMetalViewFromHWND((intptr_t)hwnd, s->dev->mtl_device, &layer);
+    if (!view || !layer) {
+        d3d12_log("[madeira-d3d12] SetHwnd: no Metal view for hwnd %p\n", (void *)hwnd);
+        if (view) ReleaseMetalView(view);
+        return DXGI_ERROR_UNSUPPORTED;
+    }
+    if (s->queue && s->queue->sub_thread) mad_queue_drain(s->queue);   /* no queued present may still use the old layer */
+    if (s->view) ReleaseMetalView(s->view);
+    s->view = view; s->layer = layer; s->hwnd = hwnd;
+    mad_swap_apply_layer(s);
+    d3d12_log("[madeira-d3d12] composition swapchain bound to hwnd %p (%ux%u)\n",
+              (void *)hwnd, s->desc.Width, s->desc.Height);
     return S_OK;
 }
 
