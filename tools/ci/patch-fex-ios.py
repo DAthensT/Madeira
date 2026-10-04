@@ -43,6 +43,14 @@ guard("FEXCore/Source/Interface/Core/Core.cpp",
       "                        IosCbEntryLog[4], IosCbEntryLog[5], IosCbEntryLog[7]);\n    }\n  }\n",
       "defined(FEX_IOS_HOST)", "[ffs-bypass]/[cb-entry] reports")
 
+# The [rpm-cas] drain reads rpmalloc's snapshot, and rpmalloc is only linked with
+# ENABLE_FEX_ALLOCATOR, which the iOS build turns off: the app's link then fails
+# on the undefined rpm_cas_snapshot_take.
+guard("FEXCore/Source/Interface/Core/Core.cpp",
+      "      /* iOS-Madeira ml622: drain the rpmalloc remote-free CAS snapshot HERE",
+      "                            Snap.fail_changed, Snap.fail_unchanged, Snap.fail_invalid);\n        }\n      }\n",
+      "defined(FEX_IOS_HOST)", "[rpm-cas] drain")
+
 guard("FEXCore/Source/Utils/ArchHelpers/Arm64.cpp",
       "  MEMORY_BASIC_INFORMATION mbi {};\n",
       "                    mbi.Protect, type, mbi.State);\n",
