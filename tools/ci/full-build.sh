@@ -124,6 +124,12 @@ dxmt)
     cp build/dxmt-ios/libdxmt_combined.a app/Madeira/libdxmt_combined.a
     ls -l app/Madeira/libdxmt_combined.a
     ;;
+rppairing)
+    # 0.1.3's in-app pairing (docs/BUILDING.md 4b): a Rust static library.
+    rustup target add aarch64-apple-ios
+    bash build/rppairing-ios/build.sh
+    ls -l app/Madeira/libmadeira_rppairing.a
+    ;;
 app)
     bash build/stage-licenses.sh
     mkdir -p app/Madeira/x86_64-vcruntime

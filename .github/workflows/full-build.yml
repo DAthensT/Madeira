@@ -109,6 +109,10 @@ jobs:
         id: dxmt
         continue-on-error: true
         run: bash tools/ci/full-build.sh dxmt
+      - name: rppairing
+        id: rppairing
+        continue-on-error: true
+        run: bash tools/ci/full-build.sh rppairing
       - name: app
         id: app
         continue-on-error: true
@@ -168,5 +172,5 @@ jobs:
           echo "gnutls=${{ steps.gnutls.outcome }} ffmpeg=${{ steps.ffmpeg.outcome }} freetype=${{ steps.freetype.outcome }}"
           echo "wine-macos=${{ steps.wine-macos.outcome }} wine-arm64ec=${{ steps.wine-arm64ec.outcome }}"
           echo "ntdll=${{ steps.ntdll.outcome }} win32u=${{ steps.win32u.outcome }} wineserver=${{ steps.wineserver.outcome }}"
-          echo "fex=${{ steps.fex.outcome }} dxmt=${{ steps.dxmt.outcome }} app=${{ steps.app.outcome }} dlls=${{ steps.dlls.outcome }} ipa=${{ steps.ipa.outcome }}"
+          echo "fex=${{ steps.fex.outcome }} dxmt=${{ steps.dxmt.outcome }} rppairing=${{ steps.rppairing.outcome }} app=${{ steps.app.outcome }} dlls=${{ steps.dlls.outcome }} ipa=${{ steps.ipa.outcome }}"
           [ "${{ steps.ipa.outcome }}" = success ]
