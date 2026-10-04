@@ -98,6 +98,7 @@ wineserver)
     PATH="$MINGW:$PATH" bash build/wineserver/build.sh || { show_errs build/wineserver/obj; exit 1; }
     ;;
 fex)
+    python3 tools/ci/patch-fex-ios.py FEX/FEXCore/Source/Interface/Core/Core.cpp
     bash build/fex-ios/build.sh
     ;;
 dxmt)
