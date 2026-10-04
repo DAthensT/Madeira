@@ -44,6 +44,9 @@ cmake -S "$SRC/llvm" -B "$IOS" -G Ninja \
     -DLLVM_ENABLE_ZLIB=Off -DLLVM_ENABLE_ZSTD=Off -DLLVM_ENABLE_TERMINFO=Off -DLLVM_ENABLE_LIBXML2=Off \
     -DLLVM_TABLEGEN="$HOST/bin/llvm-tblgen" \
     -DCMAKE_CXX_FLAGS="-include cstdint"
-ninja -C "$IOS" -j "$JOBS"
+# Only the static libraries: "all" also links the LLVMHello plugin (a MODULE
+# with an exports .def Apple ld rejects) and host tools, none of which iOS needs.
+LIBS=$(ninja -C "$IOS" -t targets all | grep -o '^lib/libLLVM[A-Za-z0-9]*\.a' | sort -u)
+ninja -C "$IOS" -j "$JOBS" $LIBS
 ls "$IOS/lib/"libLLVM*.a | wc -l
 du -sh "$IOS/lib"
