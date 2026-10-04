@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  XCODE: '26.4.1'
+  XCODE: latest-stable
   LLVM_CACHE_KEY: llvm-ios-15.0.7-v1
   BASE_TAG: v0.1.1
   BASE_IPA: Madeira-0.1.1.ipa
