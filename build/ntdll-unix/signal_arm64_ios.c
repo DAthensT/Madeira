@@ -3630,6 +3630,95 @@ static void *ios_mach_exception_thread( void *arg )
                             }
                         }
                     }
+                    /* LSE read-modify-write: LD{ADD,CLR,EOR,SET,SMAX,SMIN,UMAX,UMIN}{A}{L}{B,H}
+                     * (and their ST* aliases, Rt = XZR) — the family ml626 deferred
+                     * "until it actually appears". It has: .NET 9 CoreCLR keeps a Stub's
+                     * refcount in its header, in executable memory, and
+                     * StubCacheBase::Canonicalize's InterlockedIncrement (x86 LOCK XADD)
+                     * reaches here from FEX as
+                     *     0xb8f50106 = LDADDAL W21, W6, [X8]
+                     * Undecoded, the guest took an access violation, which CoreCLR turns
+                     * into a NullReferenceException in managed code (Slay the Spire 2:
+                     * Godot.Label's type initializer failed and every script after it).
+                     *
+                     * Encoding: size(2) 111 V=0 00 A R 1 Rs(5) o3=0 opc(3) 00 Rn(5) Rt(5)
+                     *   mask 0x3F208C00, value 0x38200000 (SWP is o3=1, handled above).
+                     * Same rules as SWP: genuinely atomic (a CAS loop on the RW alias,
+                     * SEQ_CST, stronger than any A/L variant), aligned only, Rt gets the
+                     * old value unless it is XZR. */
+                    else if ((insn & 0x3F208C00) == 0x38200000)
+                    {
+                        int size_lg2 = (insn >> 30) & 0x3;
+                        int opc = (insn >> 12) & 0x7;
+                        int rs = (insn >> 16) & 0x1f;
+                        int rt = insn & 0x1f;
+                        int bits = 8 << size_lg2;
+                        uint64_t mask = bits == 64 ? ~0ULL : ((1ULL << bits) - 1);
+                        uint64_t align_mask = (1ULL << size_lg2) - 1;
+
+                        if (rw_addr & align_mask)
+                        {
+                            static int ldop_unalign_n;
+                            if (ldop_unalign_n < 4)
+                                dprintf(STDERR_FILENO,
+                                    "[ldop-emul] #%d REFUSING unaligned atomic: insn=0x%08x size=%d "
+                                    "addr=0x%llx rw=0x%llx\n",
+                                    ++ldop_unalign_n, insn, 1 << size_lg2,
+                                    (unsigned long long)fault_addr, (unsigned long long)rw_addr);
+                        }
+                        else
+                        {
+                            uint64_t src = ((rs == 31) ? 0 : state.__x[rs]) & mask;
+                            uint64_t old = 0, nv;
+                            int done = 0;
+                            while (!done)
+                            {
+                                switch (size_lg2)
+                                {
+                                case 0:  old = __atomic_load_n((uint8_t  *)rw_addr, __ATOMIC_SEQ_CST); break;
+                                case 1:  old = __atomic_load_n((uint16_t *)rw_addr, __ATOMIC_SEQ_CST); break;
+                                case 2:  old = __atomic_load_n((uint32_t *)rw_addr, __ATOMIC_SEQ_CST); break;
+                                default: old = __atomic_load_n((uint64_t *)rw_addr, __ATOMIC_SEQ_CST); break;
+                                }
+                                {
+                                    /* sign-extended views for SMAX/SMIN */
+                                    int64_t so = (int64_t)(old << (64 - bits)) >> (64 - bits);
+                                    int64_t ss = (int64_t)(src << (64 - bits)) >> (64 - bits);
+                                    switch (opc)
+                                    {
+                                    case 0:  nv = old + src;               break; /* LDADD  */
+                                    case 1:  nv = old & ~src;              break; /* LDCLR  */
+                                    case 2:  nv = old ^ src;               break; /* LDEOR  */
+                                    case 3:  nv = old | src;               break; /* LDSET  */
+                                    case 4:  nv = so > ss ? old : src;     break; /* LDSMAX */
+                                    case 5:  nv = so < ss ? old : src;     break; /* LDSMIN */
+                                    case 6:  nv = old > src ? old : src;   break; /* LDUMAX */
+                                    default: nv = old < src ? old : src;   break; /* LDUMIN */
+                                    }
+                                }
+                                nv &= mask;
+                                switch (size_lg2)
+                                {
+                                case 0: { uint8_t  e = (uint8_t )old; done = __atomic_compare_exchange_n((uint8_t  *)rw_addr, &e, (uint8_t )nv, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); break; }
+                                case 1: { uint16_t e = (uint16_t)old; done = __atomic_compare_exchange_n((uint16_t *)rw_addr, &e, (uint16_t)nv, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); break; }
+                                case 2: { uint32_t e = (uint32_t)old; done = __atomic_compare_exchange_n((uint32_t *)rw_addr, &e, (uint32_t)nv, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); break; }
+                                default:{ uint64_t e = old;           done = __atomic_compare_exchange_n((uint64_t *)rw_addr, &e, nv,           0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); break; }
+                                }
+                            }
+                            if (rt != 31) state.__x[rt] = old;  /* W-form results are zero-extended */
+                            emulated = 1;
+                            {
+                                static int ldop_n;
+                                if (ldop_n < 8)
+                                    dprintf(STDERR_FILENO,
+                                        "[ldop-emul] #%d insn=0x%08x opc=%d size=%d Rs=x%d Rt=x%d addr=0x%llx "
+                                        "rw=0x%llx src=0x%llx old=0x%llx\n",
+                                        ++ldop_n, insn, opc, 1 << size_lg2, rs, rt,
+                                        (unsigned long long)fault_addr, (unsigned long long)rw_addr,
+                                        (unsigned long long)src, (unsigned long long)old);
+                            }
+                        }
+                    }
                     /* FEX's native backpatch lock uses CASAL on the pool RX
                      * view. Handle it before Mach-to-guest delivery; otherwise
                      * a host-runtime fault escapes into the guest's VEH.
