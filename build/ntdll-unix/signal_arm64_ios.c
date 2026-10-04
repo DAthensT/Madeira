@@ -3723,13 +3723,22 @@ static void *ios_mach_exception_thread( void *arg )
                      * view. Handle it before Mach-to-guest delivery; otherwise
                      * a host-runtime fault escapes into the guest's VEH.
                      * Deliberately limited to full-width accesses within the
-                     * existing pool alias; no new mapping or permission grant. */
-                    if (!emulated && in_jit &&
-                        (insn & 0xbfa07c00u) == 0x88a07c00u)
+                     * existing pool alias; no new mapping or permission grant.
+                     *
+                     * Anon RWX aliases too: .NET 9 CoreCLR (W^X off) CASes data
+                     * in its executable heap, which FEX emits as CASAL
+                     * (0xc8e8ff40 = CASAL X8, X0, [X26]); undecoded, the guest
+                     * took an access violation and the runtime failed fast
+                     * (0x80131623, Slay the Spire 2). Same rule as the pool: the
+                     * whole access must sit in the one alias. */
+                    if (!emulated && (insn & 0xbfa07c00u) == 0x88a07c00u)
                     {
                         unsigned cas_width = (insn & 0x40000000u) ? 8 : 4;
-                        if (sz >= cas_width && fault_addr - rx <= sz - cas_width &&
-                            ios_mach_emulate_cas(insn, rw_addr, state.__x))
+                        int covered = in_jit
+                            ? (sz >= cas_width && fault_addr - rx <= sz - cas_width)
+                            : (ios_jit_anon_alias_lookup( fault_addr + cas_width - 1 ) ==
+                               (uintptr_t)rw_addr + cas_width - 1);
+                        if (covered && ios_mach_emulate_cas(insn, rw_addr, state.__x))
                         {
                             static unsigned cas_mach_logs;
                             emulated = 1;
