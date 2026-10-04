@@ -1282,6 +1282,55 @@ void ios_dump_guest_callers( const char *tag, unsigned long long x28 )
 }
 
 
+/* Store LEN bytes at guest address ADDR for the Mach store emulator when the
+ * store may leave the alias its first byte faulted in: an unaligned SIMD or
+ * pair store that crosses into the next page (.NET's executable heap,
+ * 0x3ca7e8c2 = STR Q2, [X6, X7, SXTX] at ...ffc). Each byte goes to the RW
+ * alias of the pool or anon mapping it falls in; a byte outside every alias is
+ * ordinary memory and is written with mach_vm_write, which fails instead of
+ * faulting inside the handler. Not atomic, as such a store is not on hardware
+ * either. Returns 1 when every byte was stored. */
+static int ios_mach_store_split(uintptr_t addr, const uint8_t *src, size_t len,
+                                uintptr_t rx, uintptr_t rw, size_t pool_sz)
+{
+    extern uintptr_t ios_jit_anon_alias_lookup(uintptr_t fault_addr);
+    size_t i = 0;
+    while (i < len)
+    {
+        uintptr_t a = addr + i, dst;
+        size_t run = 1;
+        if (rx && rw && pool_sz && a >= rx && a < rx + pool_sz) dst = rw + (a - rx);
+        else dst = ios_jit_anon_alias_lookup( a );
+        if (dst)
+        {
+            /* extend while the next bytes stay contiguous in the same alias */
+            while (i + run < len)
+            {
+                uintptr_t b = a + run, d2;
+                if (rx && rw && pool_sz && b >= rx && b < rx + pool_sz) d2 = rw + (b - rx);
+                else d2 = ios_jit_anon_alias_lookup( b );
+                if (d2 != dst + run) break;
+                run++;
+            }
+            memcpy( (void *)dst, src + i, run );
+        }
+        else
+        {
+            while (i + run < len)
+            {
+                uintptr_t b = a + run;
+                if ((rx && rw && pool_sz && b >= rx && b < rx + pool_sz) || ios_jit_anon_alias_lookup( b )) break;
+                run++;
+            }
+            if (mach_vm_write( mach_task_self(), (mach_vm_address_t)a,
+                               (vm_offset_t)(src + i), (mach_msg_type_number_t)run ) != KERN_SUCCESS)
+                return 0;
+        }
+        i += run;
+    }
+    return 1;
+}
+
 /* Signal-safe 32/64-bit CAS core, shared semantics with the BSD alias path.
  * Caller establishes full alias coverage. FP/LR encodings deliberately
  * decline: Darwin's __x array contains only x0..x28. No Wine logging here. */
@@ -3227,19 +3276,10 @@ static void *ios_mach_exception_thread( void *arg )
                         /* Both halves must live in the same alias. */
                         uintptr_t rw_end = in_jit ? (uintptr_t)(rw + ((fault_addr + 2 * width - 1) - rx))
                                                   : (uintptr_t)ios_jit_anon_alias_lookup( fault_addr + 2 * width - 1 );
-                        if (!rw_end || rw_end != (uintptr_t)rw_addr + 2 * width - 1)
+                        const uint64_t v1 = IOS_STORE_SRC(rt), v2 = IOS_STORE_SRC(rt2);
+                        int stored = 0;
+                        if (rw_end && rw_end == (uintptr_t)rw_addr + 2 * width - 1)
                         {
-                            static int gstp_span_n;
-                            if (gstp_span_n < 4)
-                                dprintf(STDERR_FILENO,
-                                    "[stp-emul] #123 #%d REFUSING: %zuB span leaves the alias "
-                                    "(insn=0x%08x addr=0x%llx rw=0x%llx rw_end=0x%llx)\n",
-                                    ++gstp_span_n, 2 * width, insn, (unsigned long long)fault_addr,
-                                    (unsigned long long)rw_addr, (unsigned long long)rw_end);
-                        }
-                        else
-                        {
-                            const uint64_t v1 = IOS_STORE_SRC(rt), v2 = IOS_STORE_SRC(rt2);
                             if (is64)
                             {
                                 *(uint64_t *)rw_addr = v1;
@@ -3250,6 +3290,28 @@ static void *ios_mach_exception_thread( void *arg )
                                 *(uint32_t *)rw_addr = (uint32_t)v1;
                                 *(uint32_t *)(rw_addr + 4) = (uint32_t)v2;
                             }
+                            stored = 1;
+                        }
+                        else
+                        {
+                            /* the pair crosses out of this alias: store it byte-range by range */
+                            uint8_t pair[16];
+                            if (is64) { memcpy(pair, &v1, 8); memcpy(pair + 8, &v2, 8); }
+                            else { uint32_t w1 = (uint32_t)v1, w2 = (uint32_t)v2; memcpy(pair, &w1, 4); memcpy(pair + 4, &w2, 4); }
+                            stored = ios_mach_store_split((uintptr_t)fault_addr, pair, 2 * width, rx, rw, sz);
+                            if (!stored)
+                            {
+                                static int gstp_span_n;
+                                if (gstp_span_n < 4)
+                                    dprintf(STDERR_FILENO,
+                                        "[stp-emul] #123 #%d REFUSING: %zuB span leaves the alias and is not writable "
+                                        "(insn=0x%08x addr=0x%llx rw=0x%llx rw_end=0x%llx)\n",
+                                        ++gstp_span_n, 2 * width, insn, (unsigned long long)fault_addr,
+                                        (unsigned long long)rw_addr, (unsigned long long)rw_end);
+                            }
+                        }
+                        if (stored)
+                        {
                             if (mode == 1 || mode == 3)
                             {
                                 uint64_t base_new = (mode == 3) ? (uint64_t)fault_addr
@@ -3648,9 +3710,12 @@ static void *ios_mach_exception_thread( void *arg )
                         const size_t bytes = is_q ? 16 : ((size_t)1 << size);
                         uintptr_t rw_last = in_jit ? (uintptr_t)(rw + ((fault_addr + bytes - 1) - rx))
                                                    : (uintptr_t)ios_jit_anon_alias_lookup( fault_addr + bytes - 1 );
-                        if (have_neon && (!is_q || size == 0) && rw_last == (uintptr_t)rw_addr + bytes - 1)
+                        if (have_neon && (!is_q || size == 0) &&
+                            (rw_last == (uintptr_t)rw_addr + bytes - 1
+                                 ? (memcpy((void *)rw_addr, &neon_state.__v[rt], bytes), 1)
+                                 : ios_mach_store_split((uintptr_t)fault_addr, (const uint8_t *)&neon_state.__v[rt],
+                                                        bytes, rx, rw, sz)))
                         {
-                            memcpy((void *)rw_addr, &neon_state.__v[rt], bytes);
                             emulated = 1;
                             {
                                 static int simd_reg_n;
