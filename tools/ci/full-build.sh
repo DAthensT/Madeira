@@ -98,8 +98,14 @@ wineserver)
     PATH="$MINGW:$PATH" bash build/wineserver/build.sh || { show_errs build/wineserver/obj; exit 1; }
     ;;
 fex)
-    python3 tools/ci/patch-fex-ios.py FEX/FEXCore/Source/Interface/Core/Core.cpp
-    bash build/fex-ios/build.sh
+    python3 tools/ci/patch-fex-ios.py FEX
+    if ! bash build/fex-ios/build.sh; then
+        # Keep going past the first failing file and list every error, so one run
+        # shows everything the pinned FEX still needs for an iOS-native FEXCore.
+        cmake --build FEX/build-ios --target FEXCore FEXCore_Base -- -k -j"$JOBS" 2>&1 \
+            | sed 's/\x1b\[[0-9;]*m//g' | grep -E "error:" | sort -u | head -80
+        exit 1
+    fi
     ;;
 dxmt)
     # airconv embeds three compiled shaders; meson makes their headers with its
