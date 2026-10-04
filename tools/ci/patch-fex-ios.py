@@ -12,7 +12,7 @@ Idempotent; refuses if the text it keys on is not found.
 import sys
 
 path = sys.argv[1] if len(sys.argv) > 1 else "FEX/FEXCore/Source/Interface/Core/Core.cpp"
-src = open(path).read()
+src = open(path, encoding="utf-8").read()
 START = "  /* iOS-Madeira ml304 (task #51): REPORT CallbackPtr ENTRY ON ITS OWN"
 END = "  /* iOS-Madeira: refuse to compile obviously-invalid guest RIPs."
 MARK = "#ifdef FEX_IOS_HOST /* tools/ci/patch-fex-ios.py */\n"
@@ -24,5 +24,5 @@ if src.count(START) != 1 or src.count(END) != 1 or src.index(START) > src.index(
     sys.exit("Core.cpp: probe blocks not found as expected; FEX changed, revisit the patch")
 src = src.replace(START, MARK + START, 1)
 src = src.replace(END, "#endif /* FEX_IOS_HOST */\n\n" + END, 1)
-open(path, "w").write(src)
+open(path, "w", encoding="utf-8", newline="").write(src)
 print("Core.cpp: [ffs-bypass]/[cb-entry] reports guarded by FEX_IOS_HOST")
