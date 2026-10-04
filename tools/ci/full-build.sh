@@ -102,7 +102,7 @@ fex)
     if ! bash build/fex-ios/build.sh; then
         # Keep going past the first failing file and list every error, so one run
         # shows everything the pinned FEX still needs for an iOS-native FEXCore.
-        cmake --build FEX/build-ios --target FEXCore FEXCore_Base -- -k -j"$JOBS" 2>&1 \
+        cmake --build FEX/build-ios --target FEXCore FEXCore_Base JemallocLibs -- -k -j"$JOBS" 2>&1 \
             | sed 's/\x1b\[[0-9;]*m//g' | grep -E "error:" | sort -u | head -80
         exit 1
     fi
