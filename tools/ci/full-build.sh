@@ -19,6 +19,15 @@ MINGW="$R/toolchains/$MINGW_NAME/bin"
 BREW="$(brew --prefix 2>/dev/null || echo /opt/homebrew)"
 export PATH="$BREW/opt/bison/bin:$BREW/opt/flex/bin:$PATH"
 
+wine_headers() {   # widl-generated include/*.h of a configured Wine tree (cwd)
+    # "make include" has no rule in Wine's single makefile, so name the headers.
+    local targets
+    targets=$(cd ../include && ls *.idl | sed 's/\.idl$/.h/; s/^/include\//')
+    PATH="$MINGW:$PATH" make -k -j"$JOBS" $targets >/dev/null 2>make-include.log || true
+    grep -m 10 "Error\|error:" make-include.log || true
+    ls include/wtypes.h include/objidlbase.h include/dwrite.h include/mfobjects.h
+}
+
 show_errs() {   # print the per-file .err logs a build script left behind
     local dir="$1"
     for f in "$dir"/*.err "$dir"/err-*.txt; do
@@ -58,7 +67,7 @@ wine-macos)
     mkdir -p wine/build-macos && cd wine/build-macos
     [ -f config.status ] || PATH="$MINGW:$PATH" ../configure --enable-archs=aarch64 --without-x --disable-tests \
         || { tail -50 config.log; exit 1; }
-    PATH="$MINGW:$PATH" make -j"$JOBS" include
+    wine_headers
     ls include/config.h
     ;;
 wine-arm64ec)
@@ -67,7 +76,7 @@ wine-arm64ec)
     mkdir -p wine/build-arm64ec && cd wine/build-arm64ec
     [ -f config.status ] || PATH="$MINGW:$PATH" ../configure --enable-archs=arm64ec --without-x --disable-tests --enable-winegstreamer \
         || { tail -50 config.log; exit 1; }
-    PATH="$MINGW:$PATH" make -j"$JOBS" include
+    wine_headers
     ;;
 ntdll)
     bash build/ntdll-unix/build.sh || { show_errs build/ntdll-unix/obj; exit 1; }
@@ -84,6 +93,17 @@ fex)
     bash build/fex-ios/build.sh
     ;;
 dxmt)
+    # airconv embeds three compiled shaders; meson makes their headers with its
+    # metal + xxd generator chain (dxmt/src/airconv/meson.build), build.sh does
+    # not, so make them the same way into the shader-headers dir it includes.
+    SH="$R/build/dxmt-ios/shader-headers"; mkdir -p "$SH"
+    for s in air_msad air_samplepos air_tessellation; do
+        (cd "$SH" && xcrun -sdk macosx metal -std=metal3.1 --target=air64-apple-macos14.0 \
+            -c "$R/dxmt/src/airconv/shaders/$s.metal" -o "$s.air" && xxd -n "$s" -i "$s.air" "$s.h")
+    done
+    # winemetal_unix.c includes "../../../../../build/madeira_cfg.h", i.e. one
+    # directory ABOVE this repository (the development checkout's layout).
+    [ -e "$R/../build/madeira_cfg.h" ] || ln -sfn "$R/build" "$R/../build"
     bash build/dxmt-ios/build.sh || { show_errs build/dxmt-ios/obj; exit 1; }
     # The app links libdxmt_combined.a: this unix side plus the LLVM archives airconv
     # needs. build.sh only refreshes an existing one, so make it from scratch.
