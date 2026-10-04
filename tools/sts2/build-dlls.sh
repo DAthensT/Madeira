@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build the three ARM64EC modules Slay the Spire 2 (Godot 4, D3D12 through
-# DirectComposition) needs on top of Madeira 0.1.1, without macOS:
+# DirectComposition) needs on top of Madeira 0.1.3, without macOS:
 #
 #   madeira_d3d12.dll / d3d12.dll  composition swapchains + MadeiraD3D12SwapChainSetHwnd
 #   dcomp.dll                      minimal DirectComposition that binds them at Commit

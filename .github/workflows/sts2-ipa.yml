@@ -1,4 +1,4 @@
-# Builds a Madeira 0.1.1 IPA with the Slay the Spire 2 fixes, without macOS:
+# Builds a Madeira 0.1.3 IPA with the Slay the Spire 2 fixes, without macOS:
 # the official IPA with three rebuilt ARM64EC modules (madeira_d3d12/d3d12,
 # dxgi, dcomp) and the two-instruction ntdll.dll patch. The signature of the
 # result is broken by design; SideStore/AltStore/Sideloadly re-sign it.
@@ -13,8 +13,8 @@ permissions:
   contents: write
 
 env:
-  BASE_TAG: v0.1.1
-  BASE_IPA: Madeira-0.1.1.ipa
+  BASE_TAG: v0.1.3
+  BASE_IPA: Madeira-0.1.3.ipa
   LLVM_MINGW: llvm-mingw-20260421-ucrt-ubuntu-22.04-x86_64
   DXMT_REPO: DAthensT/dxmt
   DXMT_REF: sts2-composition
@@ -50,7 +50,7 @@ jobs:
 
       - name: Patch the IPA
         run: |
-          IPA="Madeira-0.1.1-sts2-${GITHUB_SHA::7}.ipa"
+          IPA="Madeira-0.1.3-sts2-${GITHUB_SHA::7}.ipa"
           FARM=Payload/Madeira.app/arm64ec-windows
           cp "$BASE_IPA" "$IPA"
           mkdir -p stage/$FARM
@@ -62,7 +62,7 @@ jobs:
           sha256sum "$IPA" | tee "$IPA.sha256"
           echo "IPA=$IPA" >> "$GITHUB_ENV"
           # A/B variant: only the ntdll.dll patch, every other module as shipped.
-          NTDLL_IPA="Madeira-0.1.1-sts2-ntdll-only-${GITHUB_SHA::7}.ipa"
+          NTDLL_IPA="Madeira-0.1.3-sts2-ntdll-only-${GITHUB_SHA::7}.ipa"
           cp "$BASE_IPA" "$NTDLL_IPA"
           (cd stage && zip -q "../$NTDLL_IPA" $FARM/ntdll.dll)
           sha256sum "$NTDLL_IPA" | tee "$NTDLL_IPA.sha256"
@@ -81,5 +81,5 @@ jobs:
         run: |
           TAG="sts2-${GITHUB_SHA::7}"
           gh release create "$TAG" "$IPA" "$IPA.sha256" "$NTDLL_IPA" "$NTDLL_IPA.sha256" --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" --prerelease --title "Madeira 0.1.1 + StS2 fixes (${GITHUB_SHA::7})" \
-            --notes "$IPA: official Madeira 0.1.1 IPA with madeira_d3d12/d3d12, dxgi and dcomp rebuilt from this commit and DXMT ${DXMT_REF}, and ntdll.dll patched (tools/sts2/patch-ntdll-heap-stp.py). $NTDLL_IPA: only the ntdll.dll patch (A/B). Re-sign when sideloading."
+            --target "$GITHUB_SHA" --prerelease --title "Madeira 0.1.3 + StS2 fixes (${GITHUB_SHA::7})" \
+            --notes "$IPA: official Madeira 0.1.3 IPA with madeira_d3d12/d3d12, dxgi and dcomp rebuilt from this commit and DXMT ${DXMT_REF}, and ntdll.dll patched (tools/sts2/patch-ntdll-heap-stp.py). $NTDLL_IPA: only the ntdll.dll patch (A/B). Re-sign when sideloading."

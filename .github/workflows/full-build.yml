@@ -1,5 +1,5 @@
 # Full rebuild of Madeira's app executable (native libraries + Swift app) on a
-# macOS runner, put into the official 0.1.1 IPA together with the StS2 DLLs.
+# macOS runner, put into the official 0.1.3 IPA together with the StS2 DLLs.
 # Each stage is its own step and keeps going after a failure, so one run shows
 # every broken stage; the "Check" step fails the job if any stage failed.
 name: Full build
@@ -17,8 +17,8 @@ permissions:
 env:
   XCODE: latest-stable
   LLVM_CACHE_KEY: llvm-ios-15.0.7-v1
-  BASE_TAG: v0.1.1
-  BASE_IPA: Madeira-0.1.1.ipa
+  BASE_TAG: v0.1.3
+  BASE_IPA: Madeira-0.1.3.ipa
 
 jobs:
   llvm:
@@ -127,7 +127,7 @@ jobs:
         run: |
           gh release download "$BASE_TAG" --repo willfaust/Madeira -p "$BASE_IPA" -p "$BASE_IPA.sha256"
           shasum -a 256 -c "$BASE_IPA.sha256"
-          IPA="Madeira-0.1.1-full-${GITHUB_SHA::7}.ipa"
+          IPA="Madeira-0.1.3-full-${GITHUB_SHA::7}.ipa"
           bash tools/ci/full-build.sh ipa "$BASE_IPA" "$IPA" out-dlls
           shasum -a 256 "$IPA" | tee "$IPA.sha256"
           echo "IPA=$IPA" >> "$GITHUB_ENV"
@@ -159,8 +159,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "full-${GITHUB_SHA::7}" "$IPA" "$IPA.sha256" --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" --prerelease --title "Madeira 0.1.1 full build + StS2 (${GITHUB_SHA::7})" \
-            --notes "App executable rebuilt from this commit (Mach store emulator: GPR STP writeback, LSE atomics) inside the official 0.1.1 IPA, with madeira_d3d12/d3d12, dxgi and dcomp from tools/sts2/build-dlls.sh. Re-sign when sideloading."
+            --target "$GITHUB_SHA" --prerelease --title "Madeira 0.1.3 full build + StS2 (${GITHUB_SHA::7})" \
+            --notes "App executable rebuilt from this commit (Mach store emulator: GPR STP writeback, LSE atomics) inside the official 0.1.3 IPA, with madeira_d3d12/d3d12, dxgi and dcomp from tools/sts2/build-dlls.sh. Re-sign when sideloading."
 
       - name: Check
         if: always()

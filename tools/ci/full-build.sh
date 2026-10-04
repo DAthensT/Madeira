@@ -116,12 +116,6 @@ dxmt)
         (cd "$SH" && xcrun -sdk macosx metal -std=metal3.1 --target=air64-apple-macos14.0 \
             -c "$R/dxmt/src/airconv/shaders/$s.metal" -o "$s.air" && xxd -n "$s" -i "$s.air" "$s.h")
     done
-    # winemetal_unix.c includes "../../../../../build/madeira_cfg.h", i.e. one
-    # directory ABOVE this repository (the development checkout's layout).
-    [ -e "$R/../build/madeira_cfg.h" ] || ln -sfn "$R/build" "$R/../build"
-    # ...and "../../../../remote-metal/...", the repository root before
-    # research/ was reorganized (79e28f0).
-    [ -e "$R/remote-metal" ] || ln -sfn research/remote-metal "$R/remote-metal"
     bash build/dxmt-ios/build.sh || { show_errs build/dxmt-ios/obj; exit 1; }
     # The app links libdxmt_combined.a: this unix side plus the LLVM archives airconv
     # needs. build.sh only refreshes an existing one, so make it from scratch.

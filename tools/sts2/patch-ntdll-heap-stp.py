@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rewrite one pre-indexed STP in the ARM64EC ntdll.dll (Madeira 0.1.1) so the
+"""Rewrite one pre-indexed STP in the ARM64EC ntdll.dll (Madeira 0.1.1 and 0.1.3: identical ntdll.dll) so the
 store emulator can handle it without an app rebuild.
 
 RtlCreateHeap links a new heap into the process heap list with
@@ -62,7 +62,7 @@ def main():
         print("ntdll.dll: already patched")
         return
     if words != CONTEXT[1]:
-        raise SystemExit("ntdll.dll: unexpected bytes at 0x%x: %s -- not the 0.1.1 build, refusing"
+        raise SystemExit("ntdll.dll: unexpected bytes at 0x%x: %s -- not the 0.1.1/0.1.3 build, refusing"
                          % (CONTEXT[0], " ".join("%08x" % w for w in words)))
     for rva, old, new in PATCHES:
         struct.pack_into("<I", data, rva_to_offset(data, rva), new)
