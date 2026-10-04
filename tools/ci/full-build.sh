@@ -149,12 +149,23 @@ ipa)
     STAGE="$(mktemp -d)"
     cp "$BASE" "$OUT"
     mkdir -p "$STAGE/Payload/Madeira.app/arm64ec-windows"
-    for f in Madeira Madeira.debug.dylib __preview.dylib; do
-        [ -f "$APP/$f" ] && cp "$APP/$f" "$STAGE/Payload/Madeira.app/$f"
-    done
+    # A -target build links everything into one Madeira executable; the official
+    # IPA's Madeira is a stub that loads Madeira.debug.dylib (Xcode's debug-dylib
+    # layout). Ship the new executable and drop the stale dylibs.
+    cp "$APP/Madeira" "$STAGE/Payload/Madeira.app/Madeira"
+    zip -q -d "$OUT" "Payload/Madeira.app/Madeira.debug.dylib" "Payload/Madeira.app/__preview.dylib" || true
+    # Built with CODE_SIGNING_ALLOWED=NO, so no entitlements are embedded, and
+    # sideloaders re-sign with the entitlements they find. Give it the official
+    # build's (increased-memory-limit, get-task-allow) with an ad-hoc signature.
+    unzip -q -o "$BASE" "Payload/Madeira.app/Madeira" -d "$STAGE/official"
+    codesign -d --xml --entitlements "$STAGE/ent.plist" "$STAGE/official/Payload/Madeira.app/Madeira"
+    codesign --force --sign - --entitlements "$STAGE/ent.plist" "$STAGE/Payload/Madeira.app/Madeira"
+    codesign -d --entitlements - "$STAGE/Payload/Madeira.app/Madeira" 2>/dev/null | grep -o "increased-memory-limit\|get-task-allow"
+    rm -rf "$STAGE/official"
     if [ -n "$DLLS" ]; then cp "$DLLS"/*.dll "$STAGE/Payload/Madeira.app/arm64ec-windows/"; fi
     (cd "$STAGE" && zip -q -r "$R/$OUT" Payload)
     unzip -l "$OUT" | grep -E "Madeira.app/(Madeira|Madeira.debug.dylib|__preview.dylib)$|arm64ec-windows/(dcomp|dxgi|d3d12|madeira_d3d12)\.dll"
+    ! unzip -l "$OUT" | grep -q "Madeira.debug.dylib"
     ;;
 *)
     echo "unknown stage $stage" >&2; exit 2 ;;
