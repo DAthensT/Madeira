@@ -3630,6 +3630,38 @@ static void *ios_mach_exception_thread( void *arg )
                             }
                         }
                     }
+                    /* SIMD/FP STR (register offset), every size: B/H/S/D and Q.
+                     *   size(2) 111 V=1 00 opc(2) 1 Rm option(3) S 10 Rn Rt
+                     *   opc 00 = STR B/H/S/D (bytes = 1 << size), opc 10 = STR Q
+                     *   (size must be 00). Mask 0x3f600c00 == 0x3c200800 fixes V,
+                     *   L=0 (bit 22), bit 21 and the 10 at bits 11:10; bit 23 picks Q.
+                     * With FEX_VECTORTSOENABLED=1 (needed against Slay the Spire 2's
+                     * startup heap corruption), FEX emits these for SSE stores into
+                     * .NET's executable heap:
+                     *     0x3ca7e8c2 = STR Q2, [X6, X7, SXTX]
+                     * fault_addr is the final address; there is no writeback. */
+                    else if ((insn & 0x3f600c00) == 0x3c200800)
+                    {
+                        const int is_q = (insn >> 23) & 1;
+                        const int size = (insn >> 30) & 3;
+                        const int rt = insn & 0x1f;
+                        const size_t bytes = is_q ? 16 : ((size_t)1 << size);
+                        uintptr_t rw_last = in_jit ? (uintptr_t)(rw + ((fault_addr + bytes - 1) - rx))
+                                                   : (uintptr_t)ios_jit_anon_alias_lookup( fault_addr + bytes - 1 );
+                        if (have_neon && (!is_q || size == 0) && rw_last == (uintptr_t)rw_addr + bytes - 1)
+                        {
+                            memcpy((void *)rw_addr, &neon_state.__v[rt], bytes);
+                            emulated = 1;
+                            {
+                                static int simd_reg_n;
+                                if (simd_reg_n < 4)
+                                    dprintf(STDERR_FILENO,
+                                        "[simd-str-reg] #%d insn=0x%08x bytes=%zu Rt=v%d addr=0x%llx rw=0x%llx\n",
+                                        ++simd_reg_n, insn, bytes, rt,
+                                        (unsigned long long)fault_addr, (unsigned long long)rw_addr);
+                            }
+                        }
+                    }
                     /* LSE read-modify-write: LD{ADD,CLR,EOR,SET,SMAX,SMIN,UMAX,UMIN}{A}{L}{B,H}
                      * (and their ST* aliases, Rt = XZR) — the family ml626 deferred
                      * "until it actually appears". It has: .NET 9 CoreCLR keeps a Stub's
