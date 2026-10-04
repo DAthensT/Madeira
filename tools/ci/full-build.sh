@@ -41,6 +41,7 @@ echo "=== stage: $stage ==="
 case "$stage" in
 toolchains)
     brew install bison flex ninja meson ccache pkgconf sevenzip >/dev/null
+    python3 -m pip install --quiet --break-system-packages --user packaging setuptools || true
     if [ ! -x "$MINGW/arm64ec-w64-mingw32-clang" ]; then
         mkdir -p toolchains
         curl -fsSL "https://github.com/mstorsjo/llvm-mingw/releases/download/20260421/$MINGW_NAME.tar.xz" \
@@ -79,6 +80,13 @@ wine-arm64ec)
     wine_headers
     ;;
 ntdll)
+    # server_ios.c's [xp] line reads rusage_info_v6.ri_page_wait_time_mach, which
+    # no SDK on the runner (up to Xcode 26.6) declares; the development build used
+    # a newer one. Only a diagnostic column: report 0 when the SDK lacks it.
+    if ! grep -q ri_page_wait_time_mach "$(xcrun --sdk iphoneos --show-sdk-path)/usr/include/sys/resource.h"; then
+        sed -i '' 's/XP_MS( ru.ri_page_wait_time_mach - pru.ri_page_wait_time_mach )/0.0/' build/ntdll-unix/server_ios.c
+        ! grep -q ri_page_wait_time_mach build/ntdll-unix/server_ios.c
+    fi
     bash build/ntdll-unix/build.sh || { show_errs build/ntdll-unix/obj; exit 1; }
     show_errs build/ntdll-unix/obj
     ;;
@@ -104,6 +112,9 @@ dxmt)
     # winemetal_unix.c includes "../../../../../build/madeira_cfg.h", i.e. one
     # directory ABOVE this repository (the development checkout's layout).
     [ -e "$R/../build/madeira_cfg.h" ] || ln -sfn "$R/build" "$R/../build"
+    # ...and "../../../../remote-metal/...", the repository root before
+    # research/ was reorganized (79e28f0).
+    [ -e "$R/remote-metal" ] || ln -sfn research/remote-metal "$R/remote-metal"
     bash build/dxmt-ios/build.sh || { show_errs build/dxmt-ios/obj; exit 1; }
     # The app links libdxmt_combined.a: this unix side plus the LLVM archives airconv
     # needs. build.sh only refreshes an existing one, so make it from scratch.
