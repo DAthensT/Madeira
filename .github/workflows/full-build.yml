@@ -4,7 +4,11 @@
 # every broken stage; the "Check" step fails the job if any stage failed.
 name: Full build
 
+# Runs on a push to sts2-full (git push fork sts2:sts2-full): workflow_dispatch
+# needs the workflow on the fork's default branch, which is left untouched.
 on:
+  push:
+    branches: [sts2-full]
   workflow_dispatch:
 
 permissions:
